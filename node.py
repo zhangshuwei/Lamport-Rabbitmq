@@ -35,7 +35,7 @@ class Node(object):
 		# define a lock
 		self.lock = Lock()
 		self.timestamp = Value('i', 0)
-		self.waiting_q = Manager().list()
+		self.waiting_q = Manager().list([])
 	
 	def setup_connection(self):
 		self.connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
@@ -69,48 +69,33 @@ class Node(object):
 			self.response = body
 			ack_content = json.loads(body)
 			self.num_response += 1
-			print("Get ack: %s" % self.response)
+			print("<<<Get ack back: %s" % self.response)
 			self.lock.acquire() # lock it
 			self.timestamp.value = max(self.timestamp.value, ack_content["timestamp"]) + 1
-			
-			self.waiting_q = sorted(self.waiting_q, key=itemgetter("timestamp","id"))
+
 			self.lock.release() # release it
-			print("self.waiting_q in the on_getting_response is", self.waiting_q)
-			if((self.num_response == self.nb_site - 1) and (self.waiting_q[0]['id'] == self.id)):
-				print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>critique exception!>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
-				print("yehp! Enter critique exception!")
-				time.sleep(5)
-				message = {"timestamp": self.timestamp.value, "id": self.id, "message_type": "release"}
-				self.send_request(message)
-				self.num_response = 0
+			
+			if(self.num_response == self.nb_site - 1):
+				self.try_critical_section()
 		
-		print("After ack, Now my timestamp is: %i \n" % self.timestamp.value)
+		#print("After ack, Now my timestamp is: %i \n" % self.timestamp.value)
 	
 	def send_request(self, message):
 		self.lock.acquire() # lock it		
 		self.timestamp.value += 1
 		message["timestamp"] = self.timestamp.value
 		if(message["message_type"] == "request"):
-			print("Send request: %s" % message)
+			print(">>>Send request: %s" % message)
 			self.waiting_q.append(message) # put the request in the waiting queue
 		elif(message["message_type"] == "release"):
-			print("Send release: %s" % message)
-			print("before pop")
-			print(list(self.waiting_q))
+			print(">>>Send release: %s" % message)
 			if(len(self.waiting_q) > 0):
-				self.waiting_q = sorted(self.waiting_q, key=itemgetter("timestamp","id"))
-				del self.waiting_q[0]
-				#temp_q = []
-				#temp_q.extend(self.waiting_q)
-				#heapq.heapify(temp_q)
-				#ele = heapq.heappop(temp_q) #
-				print("after pop is")
-				print('>>>>>>>>>>>>>>>>>>>>>>>>>>release!>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>')
-				print(list(self.waiting_q))
-				print("now waiting list")
+				first_site = sorted(self.waiting_q, key=itemgetter("timestamp"))[0]
+				self.waiting_q.remove(first_site)
+				print('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>Release!>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>')
 		self.lock.release() # release it    
-		print("self.waiting_q in send request is ")
-		print(self.waiting_q)
+		#print("self.waiting_q in send request is ")
+		#print(self.waiting_q)
 		message_json = json.dumps(message)
 		self.channel.basic_publish(exchange=self.exchange_id,
 			routing_key='',
@@ -119,16 +104,18 @@ class Node(object):
 					correlation_id = self.corr_id,
 					delivery_mode=2,),
 			body=message_json)
-		
-		print("After sending, timestamp is ", self.timestamp.value)
+
+		if(self.num_response == self.nb_site - 1):
+				self.try_critical_section()
+		#print("After sending, timestamp is %s" % self.timestamp.value)
 
 	def on_receive(self, ch, method, props, body):
 		request_content = json.loads(body)
 		self.lock.acquire() # lock it
 		self.timestamp.value = max(self.timestamp.value, request_content["timestamp"]) + 1
 		if(request_content["message_type"] == "request"):
-			print("Get request: ")
-			print("Id received is:", request_content["id"])
+			print("<<<Get request: %s" % request_content)
+			print("<<<Received from Id: %s" % request_content["id"])
 			self.waiting_q.append(request_content) # put the request in the waiting queue
 			self.timestamp.value += 1
 			response = {"id": self.id, "timestamp": self.timestamp.value, "message_type": "response"}        
@@ -141,19 +128,29 @@ class Node(object):
 			ch.basic_ack(delivery_tag = method.delivery_tag)
 		elif(request_content["message_type"] == "release"):
 			if(len(self.waiting_q) > 0):
-				self.waiting_q = sorted(self.waiting_q, key=itemgetter("timestamp"))
-				del self.waiting_q[0]
-				#heapq.heappop(list(self.waiting_q))
-			print("Get release: ", request_content)
-			print("Id received is:", request_content["id"])
+				first_site = sorted(self.waiting_q, key=itemgetter("timestamp", "id"))[0]
+				self.waiting_q.remove(first_site)
+			print("<<<Get release: %s" % request_content)
+			print("<<<Received from Id: %s " % request_content["id"])
 		
 		self.lock.release() # release it
 		
 		
 				
-		print("Timestamp received is:", request_content["timestamp"])
+		#print("Timestamp received is:", request_content["timestamp"])
 		
-		print("After receive, Now my timestamp is:", self.timestamp.value)
+		#print("After receive, Now my timestamp is:", self.timestamp.value)
+
+	def try_critical_section(self):
+		first_id = sorted(self.waiting_q, key=itemgetter("timestamp", "id"))[0]["id"]
+		if(first_id == self.id):
+			print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>critical section!>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+			print("yehp! Get into the critical section!")
+			time.sleep(5)
+			message = {"timestamp": self.timestamp.value, "id": self.id, "message_type": "release"}
+			self.num_response = 0
+			self.send_request(message)
+				
 
 
 if __name__ == "__main__":
