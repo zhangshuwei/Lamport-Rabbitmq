@@ -12,9 +12,11 @@ class Node(object):
 	def __init__(self, id, exchanges):
 		self.id = int(id)
 		self.exchange_id = "exchange_" + str(self.id)
+		self.nb_site = int(exchanges)
 		# declare a queue to receive meg from other exchange
 		self.queue_name = "queue_" + str(self.id)
 		self.corr_id = str(uuid.uuid4())
+		self.num_response = 0
 
 	def start(self, exchanges):
 		#set up initial share value
@@ -65,18 +67,21 @@ class Node(object):
 		if self.corr_id == props.correlation_id:
 			self.response = body
 			ack_content = json.loads(body)
-			print("!!!!!!!!", ack_content)
+			self.num_response += 1
+			print("Get ack: %s" % self.response)
 			self.lock.acquire() # lock it
 			self.timestamp.value = max(self.timestamp.value, ack_content["timestamp"]) + 1
 			self.lock.release() # release it
 			heapq.heapify(list(self.waiting_q))
-			if(self.waiting_q[0]['id'] == self.id):
+			if((self.num_response == self.nb_site - 1) and (self.waiting_q[0]['id'] == self.id)):
+				print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>critique exception!>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
 				print("yehp! Enter critique exception!")
 				time.sleep(5)
 				self.timestamp.value += 1
 				message = {"timestamp": self.timestamp.value, "id": self.id, "message_type": "release"}
 				self.send_request(message)
-		print("Get ack: %s" % self.response)
+				self.num_response = 0
+		
 		print("After ack, Now my timestamp is: %i \n" % self.timestamp.value)
 	
 	def send_request(self, message):
@@ -84,15 +89,22 @@ class Node(object):
 		self.timestamp.value += 1
 		message["timestamp"] = self.timestamp.value
 		if(message["message_type"] == "request"):
+			print("Send request: %s" % message)
 			self.waiting_q.append(message) # put the request in the waiting queue
 		elif(message["message_type"] == "release"):
+			print("Send release: %s" % message)
 			print("before pop")
 			print(list(self.waiting_q))
-			ele = heapq.heappop(list(self.waiting_q)) #
-			print("after pop is")
-			print(ele)
-			print('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>') 
-			print(list(self.waiting_q))
+			if(len(self.waiting_q) > 0):
+				ele = heapq.heappop(list(self.waiting_q)) #
+				print("after pop is")
+				print(ele)
+				print('>>>>>>>>>>>>>>>>>>>>>>>>>>release!>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>')
+				ele = heapq.heappop(list(self.waiting_q)) #
+				ele = heapq.heappop(list(self.waiting_q)) #
+				ele = heapq.heappop(list(self.waiting_q)) #
+				print(list(self.waiting_q))
+				print("now waiting list")
 		self.lock.release() # release it    
 		
 		message_json = json.dumps(message)
@@ -103,13 +115,15 @@ class Node(object):
 					correlation_id = self.corr_id,
 					delivery_mode=2,),
 			body=message_json)
-		print("Send request: %s" % message)
+		
 		print("After sending, timestamp is ", self.timestamp.value)
 
 	def on_receive(self, ch, method, props, body):
 		request_content = json.loads(body)
 		self.lock.acquire() # lock it
 		if(request_content["message_type"] == "request"):
+			print("Get request: ")
+			print("Id received is:", request_content["id"])
 			self.waiting_q.append(request_content) # put the request in the waiting queue
 			response = {"id": self.id, "timestamp": self.timestamp.value, "message_type": "response"}        
 			self.channel.basic_publish(exchange='',
@@ -120,14 +134,17 @@ class Node(object):
 						body=json.dumps(response)) 
 			ch.basic_ack(delivery_tag = method.delivery_tag)
 		elif(request_content["message_type"] == "release"):
-			heapq.heappop(list(self.waiting_q))
+			if(len(self.waiting_q) > 0):
+				heapq.heappop(list(self.waiting_q))
+			print("Get release: ", request_content)
+			print("Id received is:", request_content["id"])
 		self.timestamp.value = max(self.timestamp.value, request_content["timestamp"]) + 1
 		self.lock.release() # release it
 		
 		
-		print("Get request: ")		
+				
 		print("Timestamp received is:", request_content["timestamp"])
-		print("Id received is:", request_content["id"])
+		
 		print("After receive, Now my timestamp is:", self.timestamp.value)
 
 
@@ -137,7 +154,7 @@ if __name__ == "__main__":
 	site_id = sys.argv[1]
 	nb_exchange = sys.argv[2]
 	site = Node(site_id, nb_exchange)
-	site.start(nb_exchange)	
+	site.start(nb_exchange)
 	p1 = Process(target=site.channel.start_consuming, args=())
 	p1.start()
 	while(True):
@@ -146,8 +163,10 @@ if __name__ == "__main__":
 			print("Enter error")
 			continue
 		if(int(func) == 2):
-			print("yes 2")
-			#sys.exit(0)
+			print("quit the connection")
+			p1.terminate()
+			site.connection.close()
+			sys.exit(0)
 		if(int(func) == 1):
 			message = {"timestamp":site.timestamp.value, "id":site.id, "message_type": "request"}
 			print("site timestamp is ", site.timestamp.value)
@@ -155,9 +174,3 @@ if __name__ == "__main__":
 		else:
 			continue
 	#p1.join()		
-		
-	
-	
-	
-	
-    
