@@ -121,6 +121,7 @@ class Node(object):
 	def on_receive(self, ch, method, props, body):
 		request_content = json.loads(body)
 		self.lock.acquire() # lock it
+		self.timestamp.value = max(self.timestamp.value, request_content["timestamp"]) + 1
 		if(request_content["message_type"] == "request"):
 			print("Get request: ")
 			print("Id received is:", request_content["id"])
@@ -138,7 +139,7 @@ class Node(object):
 				heapq.heappop(list(self.waiting_q))
 			print("Get release: ", request_content)
 			print("Id received is:", request_content["id"])
-		self.timestamp.value = max(self.timestamp.value, request_content["timestamp"]) + 1
+		
 		self.lock.release() # release it
 		
 		
