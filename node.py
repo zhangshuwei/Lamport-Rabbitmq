@@ -5,6 +5,7 @@ import sys
 import time
 import json
 import heapq 
+from operator import itemgetter
 from multiprocessing import Process, Manager, Value, Lock
 
 
@@ -41,7 +42,7 @@ class Node(object):
 		self.channel = self.connection.channel()
 	
 	def setup_queue(self, exchanges):
-		nb_exchange = int(exchanges)
+		nb_exchange = self.nb_site
 		for i in range(1, nb_exchange+1):
 			self.queue_id = "queue_" + str(i)
 			self.channel.queue_declare(self.queue_id,durable=True)
@@ -50,7 +51,7 @@ class Node(object):
 	def setup_exchange(self, exchanges):
 		# declare exchange 
 		self.channel.exchange_declare(exchange=self.exchange_id, exchange_type="fanout")
-		for e in range(1, int(exchanges)+1):
+		for e in range(1, self.nb_site+1):
 			exchange_id = "exchange_" + str(e)
 			self.channel.exchange_declare(exchange=exchange_id, exchange_type="fanout")
 			if e != int(self.id):
@@ -71,13 +72,14 @@ class Node(object):
 			print("Get ack: %s" % self.response)
 			self.lock.acquire() # lock it
 			self.timestamp.value = max(self.timestamp.value, ack_content["timestamp"]) + 1
+			
+			self.waiting_q = sorted(self.waiting_q, key=itemgetter("timestamp","id"))
 			self.lock.release() # release it
-			heapq.heapify(list(self.waiting_q))
+			print("self.waiting_q in the on_getting_response is", self.waiting_q)
 			if((self.num_response == self.nb_site - 1) and (self.waiting_q[0]['id'] == self.id)):
 				print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>critique exception!>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
 				print("yehp! Enter critique exception!")
 				time.sleep(5)
-				self.timestamp.value += 1
 				message = {"timestamp": self.timestamp.value, "id": self.id, "message_type": "release"}
 				self.send_request(message)
 				self.num_response = 0
@@ -96,17 +98,19 @@ class Node(object):
 			print("before pop")
 			print(list(self.waiting_q))
 			if(len(self.waiting_q) > 0):
-				ele = heapq.heappop(list(self.waiting_q)) #
+				self.waiting_q = sorted(self.waiting_q, key=itemgetter("timestamp","id"))
+				del self.waiting_q[0]
+				#temp_q = []
+				#temp_q.extend(self.waiting_q)
+				#heapq.heapify(temp_q)
+				#ele = heapq.heappop(temp_q) #
 				print("after pop is")
-				print(ele)
 				print('>>>>>>>>>>>>>>>>>>>>>>>>>>release!>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>')
-				ele = heapq.heappop(list(self.waiting_q)) #
-				ele = heapq.heappop(list(self.waiting_q)) #
-				ele = heapq.heappop(list(self.waiting_q)) #
 				print(list(self.waiting_q))
 				print("now waiting list")
 		self.lock.release() # release it    
-		
+		print("self.waiting_q in send request is ")
+		print(self.waiting_q)
 		message_json = json.dumps(message)
 		self.channel.basic_publish(exchange=self.exchange_id,
 			routing_key='',
@@ -126,6 +130,7 @@ class Node(object):
 			print("Get request: ")
 			print("Id received is:", request_content["id"])
 			self.waiting_q.append(request_content) # put the request in the waiting queue
+			self.timestamp.value += 1
 			response = {"id": self.id, "timestamp": self.timestamp.value, "message_type": "response"}        
 			self.channel.basic_publish(exchange='',
 						routing_key=props.reply_to,
@@ -136,7 +141,9 @@ class Node(object):
 			ch.basic_ack(delivery_tag = method.delivery_tag)
 		elif(request_content["message_type"] == "release"):
 			if(len(self.waiting_q) > 0):
-				heapq.heappop(list(self.waiting_q))
+				self.waiting_q = sorted(self.waiting_q, key=itemgetter("timestamp"))
+				del self.waiting_q[0]
+				#heapq.heappop(list(self.waiting_q))
 			print("Get release: ", request_content)
 			print("Id received is:", request_content["id"])
 		
@@ -172,6 +179,7 @@ if __name__ == "__main__":
 			message = {"timestamp":site.timestamp.value, "id":site.id, "message_type": "request"}
 			print("site timestamp is ", site.timestamp.value)
 			site.send_request(message)
+			time.sleep(10)
 		else:
 			continue
 	#p1.join()		
