@@ -105,8 +105,6 @@ class Node(object):
 					delivery_mode=2,),
 			body=message_json)
 
-		if(self.num_response == self.nb_site - 1):
-				self.try_critical_section()
 		#print("After sending, timestamp is %s" % self.timestamp.value)
 
 	def on_receive(self, ch, method, props, body):
@@ -135,6 +133,8 @@ class Node(object):
 		
 		self.lock.release() # release it
 		
+		if(self.num_response == self.nb_site - 1):
+				self.try_critical_section()
 		
 				
 		#print("Timestamp received is:", request_content["timestamp"])
