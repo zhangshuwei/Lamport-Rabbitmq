@@ -17,7 +17,6 @@ class Node(object):
 		# declare a queue to receive meg from other exchange
 		self.queue_name = "queue_" + str(self.id)
 		self.corr_id = str(uuid.uuid4())
-		self.num_response = 0
 
 	def start(self):
 		#set up initial share value
@@ -36,6 +35,7 @@ class Node(object):
 		self.lock = Lock()
 		self.timestamp = Value('i', 0)
 		self.waiting_q = Manager().list([])
+		self.num_response = Value('i', 0)
 	
 	def setup_connection(self):
 		self.connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
@@ -68,14 +68,16 @@ class Node(object):
 		if self.corr_id == props.correlation_id:
 			self.response = body
 			ack_content = json.loads(body)
-			self.num_response += 1
 			print("<<<Get ack back: %s" % self.response)
 			self.lock.acquire() # lock it
-			self.timestamp.value = max(self.timestamp.value, ack_content["timestamp"]) + 1
 
+			self.num_response.value += 1
+			self.timestamp.value = max(self.timestamp.value, ack_content["timestamp"]) + 1
+			num_response = self.num_response.value
+			
 			self.lock.release() # release it
 			
-			if(self.num_response == self.nb_site - 1):
+			if(num_response == self.nb_site - 1):
 				self.try_critical_section()
 		
 		#print("After ack, Now my timestamp is: %i \n" % self.timestamp.value)
@@ -131,9 +133,12 @@ class Node(object):
 			print("<<<Get release: %s" % request_content)
 			print("<<<Received from Id: %s " % request_content["id"])
 		
+		num_response = self.num_response.value
+
 		self.lock.release() # release it
 
-		if(self.num_response == self.nb_site - 1):
+		 
+		if(num_response == self.nb_site - 1):
 				self.try_critical_section()
 		
 				
@@ -147,8 +152,10 @@ class Node(object):
 			print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>critical section!>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
 			print("yehp! Get into the critical section!")
 			time.sleep(5)
+			self.lock.acquire();
 			message = {"timestamp": self.timestamp.value, "id": self.id, "message_type": "release"}
-			self.num_response = 0
+			self.num_response.value = 0
+			self.lock.release();
 			self.send_request(message)
 				
 
@@ -159,7 +166,7 @@ if __name__ == "__main__":
 	site_id = sys.argv[1]
 	nb_exchange = sys.argv[2]
 	site = Node(site_id, nb_exchange)
-	site.start(nb_exchange)
+	site.start()
 	p1 = Process(target=site.channel.start_consuming, args=())
 	p1.start()
 	while(True):
