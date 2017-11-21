@@ -19,15 +19,15 @@ class Node(object):
 		self.corr_id = str(uuid.uuid4())
 		self.num_response = 0
 
-	def start(self, exchanges):
+	def start(self):
 		#set up initial share value
 		self.setup_share_val()
 		#set up connection
 		self.setup_connection() 
 		#set up queues
-		self.setup_queue(exchanges)
+		self.setup_queue()
 		#set up exchanges and bind queue to each exchange       
-		self.setup_exchange(exchanges)
+		self.setup_exchange()
 		#set up callback queue
 		self.setup_callbackQueue()
 	
@@ -41,14 +41,14 @@ class Node(object):
 		self.connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
 		self.channel = self.connection.channel()
 	
-	def setup_queue(self, exchanges):
+	def setup_queue(self):
 		nb_exchange = self.nb_site
 		for i in range(1, nb_exchange+1):
 			self.queue_id = "queue_" + str(i)
 			self.channel.queue_declare(self.queue_id,durable=True)
 		self.channel.basic_consume(self.on_receive, queue=self.queue_name)
 
-	def setup_exchange(self, exchanges):
+	def setup_exchange(self):
 		# declare exchange 
 		self.channel.exchange_declare(exchange=self.exchange_id, exchange_type="fanout")
 		for e in range(1, self.nb_site+1):
@@ -132,7 +132,7 @@ class Node(object):
 			print("<<<Received from Id: %s " % request_content["id"])
 		
 		self.lock.release() # release it
-		
+
 		if(self.num_response == self.nb_site - 1):
 				self.try_critical_section()
 		
