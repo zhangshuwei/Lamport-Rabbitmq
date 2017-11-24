@@ -79,8 +79,6 @@ class Node(object):
 			
 			if(num_response == self.nb_site - 1):
 				self.try_critical_section()
-		
-		#print("After ack, Now my timestamp is: %i \n" % self.timestamp.value)
 	
 	def send_request(self, message):
 		self.lock.acquire() # lock it		
@@ -96,8 +94,7 @@ class Node(object):
 				self.waiting_q.remove(first_site)
 				print('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>Release!>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>')
 		self.lock.release() # release it    
-		#print("self.waiting_q in send request is ")
-		#print(self.waiting_q)
+
 		message_json = json.dumps(message)
 		self.channel.basic_publish(exchange=self.exchange_id,
 			routing_key='',
@@ -106,8 +103,6 @@ class Node(object):
 					correlation_id = self.corr_id,
 					delivery_mode=2,),
 			body=message_json)
-
-		#print("After sending, timestamp is %s" % self.timestamp.value)
 
 	def on_receive(self, ch, method, props, body):
 		request_content = json.loads(body)
@@ -136,15 +131,9 @@ class Node(object):
 		num_response = self.num_response.value
 
 		self.lock.release() # release it
-
 		 
 		if(num_response == self.nb_site - 1):
 				self.try_critical_section()
-		
-				
-		#print("Timestamp received is:", request_content["timestamp"])
-		
-		#print("After receive, Now my timestamp is:", self.timestamp.value)
 
 	def try_critical_section(self):
 		first_id = sorted(self.waiting_q, key=itemgetter("timestamp", "id"))[0]["id"]
